@@ -6,14 +6,11 @@ Created on Thu Jun 18 16:06:34 2020
 """
 import pygame
 import numpy as np
-from Genetics import *
-
 
 black = (0,0,0)
 white = (255,255,255)
 red = (255,0,0)
-green = (0,255,0)
-blue = (0,0,255)
+
 
 class Field(object):
     def __init__(self,size = (1000,1000),limit = 150):
@@ -36,13 +33,13 @@ class Field(object):
     
     def get_position(self,pos):
         if pos[0] < 0:
-            pos[0] = self.size[0]-1
+            pos[0] = self.size[0]
         if pos[1] < 0:
-            pos[1] = self.size[1]-1
+            pos[1] = self.size[1]
         if pos[0] > self.size[0] :
-            pos[0] = 1
+            pos[0] = 0
         if pos[1] > self.size[1] :
-            pos[1] = 1
+            pos[1] = 0
         return pos
         
     def get_size(self):
@@ -52,23 +49,23 @@ class Field(object):
 
 class Triangle(object):
     def __init__(self,screen = None,color = (0,0,0),size = (1,1)):
-        self.color = np.array(color)
+        self.color = color
         self.screen = screen
         self.points = ((size[0],0),(0,size[1]*0.5),(0,-size[1]*0.5))
         self.cache = np.zeros((3,2))
     
-    def draw(self,rotm,pos,rating):
+    def draw(self,rotm,pos):
         for idx,point in enumerate(self.points):
             m = np.dot(rotm, point)
             self.cache[idx] = m + pos
         pygame.draw.polygon(self.screen,self.color,self.cache)
      
 class Boid(object):
-    def __init__(self,idx = 0,screen = None,field = None,others = None,ki = None,init_rot = 0,init_pos = (0,0),init_speed = 1,view = 200):
+    def __init__(self,idx = 0,screen = None,field = None,others = None,init_rot = 0,init_pos = (0,0),init_speed = 1,view = 100):
         self.rot = init_rot 
         self.pos = np.array(init_pos,dtype=np.float16)
         self.speed = init_speed
-        self.form = Triangle(screen,(255,255,255),(20,10))
+        self.form = Triangle(screen,white,(20,10))
         self.field = field
         self.others = others
         self.view = view
@@ -76,8 +73,6 @@ class Boid(object):
         self.count = 0
         self.idx = idx
         self.screen = screen
-        self.ki = ki
-        self.rating = 0
         
     def update(self):
         c,s = np.cos(self.rot), np.sin(self.rot)
@@ -91,7 +86,6 @@ class Boid(object):
         # drot = self.field.get_direction(dirvec,self.pos[0],self.pos[1])*0.005 *self.speed
         # if drot == 0:
         #     self.flocking(irotm)
-        #     pass
         # else:
         #     self.rot += drot
         
@@ -103,7 +97,7 @@ class Boid(object):
         elif self.rot >= 2*np.pi:
             self.rot = 0
             
-        self.form.draw(rotm,self.pos,self.rating)
+        self.form.draw(rotm,self.pos)
     
     def get_nearest(self):
         self.count = 0
@@ -121,69 +115,81 @@ class Boid(object):
                 self.cache[self.count][3] = boid.pos[0]
                 self.cache[self.count][4] = boid.pos[1]
                 
-                
                 self.count += 1
-                
     
     def flocking(self,irotm):
         if self.count == 0:
             return
-        beaboid = np.sum(self.cache[0:self.count],axis=0)/self.count
+        aveboid = np.sum(self.cache[0:self.count],axis=0)/self.count
         min_dist = self.cache[0:self.count,2]
         minboid = self.cache[np.argmin(min_dist)]
-        beavector = np.dot(irotm,beaboid[3:]-self.pos).reshape(-1)
-        minvector = np.dot(irotm,minboid[3:]-self.pos).reshape(-1)
+        vector = np.asarray(np.dot(irotm,aveboid[3:]-self.pos)).reshape(-1)
+        minvector = np.asarray(np.dot(irotm,minboid[3:]-self.pos)).reshape(-1)
         
-        drot = beaboid[0]-self.rot
+        drot = aveboid[0]-self.rot
         if drot > np.pi:
-            drot = -2+drot/np.pi
+            drot = -2*np.pi+drot
             
-        mindrot = minboid[0]-self.rot
-        if mindrot > np.pi:
-            mindrot = -2+mindrot/np.pi
+        # Place NN here !!!
             
-        beaboid[0] = drot
-        beaboid[1] = beaboid[1]-self.speed
-        beaboid[2] = beaboid[2]/self.view 
-        beaboid[3:] = beavector/self.view
-        minboid[0] = mindrot
-        minboid[1] = minboid[1]-self.speed
-        minboid[2] = (minboid[2]-50)/self.view
-        minboid[3:] = minvector/self.view
+            
+        # alignment
+        self.rot += np.clip(drot,-1,1) *0.3*(self.view-aveboid[2])/(self.view)
+        self.speed +=  np.clip((aveboid[1]-self.speed),-1,1)*0.1*(self.view-aveboid[2])/(self.view)
         
-        control = self.ki.predict(np.concatenate([beaboid,minboid]).reshape(-1,1)).reshape(-1)
-            
-        self.rot += np.clip(control[0]-control[1],-0.2,0.2)
-        self.speed += np.clip(control[2]-control[3],-0.2,0.2)
-        #self.rot += np.clip(control[0]-control[1],-1,1)/3
-        #self.speed += np.clip(control[2]-control[3],-1,1)/3
-        self.speed = np.clip(self.speed,3,8)
+        # cohesion
+        self.speed += np.clip(aveboid[2]/self.view,-0.05,0.05) * np.sign(vector[0])
+        self.rot -= np.clip(aveboid[2]/self.view * -np.sign((vector[0]+50)*vector[1]),-0.01,0.01)
+        
+        # separation
+        if minboid[2] < 50:
+            self.speed += np.clip((minboid[2]-50)/30*np.sign(minvector[0]),-0.1,0.1)
+            self.rot += np.clip((minboid[2]-50)/30*np.sign(minvector[1]),-0.05,0.05) * np.sign(minvector[0]+50) 
+        
+        self.speed = np.clip(self.speed,3,7)
+        
+        
+        
     
 class Flock(object):
     def __init__(self,screen = None,field = None,size = 10):
         self.field = field
-        self.size = size        
-        self.screen = screen
-
-        
-    def create_swarm(self,target):
-        field_size = self.field.get_size()
+        self.size = size
         self.boids = []
+        self.screen = screen
+        
+    def create_swarm(self):
+        field_size = self.field.get_size()
         for x in range(self.size):
             init_rot = np.random.random()*2*np.pi
             init_x = field_size[0]*np.random.random()
             init_y = field_size[1]*np.random.random()
             init_speed = 5*np.random.random()+2
-            ki = Sequential()
-            ki.init_network(target[0],target[1],target[2])
-            self.boids.append(Boid(x,self.screen,self.field,self.boids,ki,init_rot,(init_x,init_y),init_speed,300))
-            
-    def update_swarm(self,target,color):
-        for boid in self.boids:
-            boid.ki.init_network(target[0],target[1],target[2])
-            boid.form.color = color
+            self.boids.append(Boid(x,self.screen,self.field,self.boids,init_rot,(init_x,init_y),init_speed,300))
     
     def update(self):
         for boid in self.boids:
             boid.update()
-            
+        
+if __name__ == '__main__':
+    pygame.init()
+    field = Field()
+    gameDisplay = pygame.display.set_mode(field.get_size())
+    clock = pygame.time.Clock()
+    myflock = Flock(gameDisplay,field,150)
+    myflock.create_swarm()
+    ticks = 0
+    while True:
+        if ticks >= 300:
+            myflock = Flock(gameDisplay,field,150)
+            myflock.create_swarm()
+            ticks = 0
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                break
+        gameDisplay.fill((0,0,0))
+        myflock.update()
+        clock.tick(120)
+        ticks += 1
+        pygame.display.update()
