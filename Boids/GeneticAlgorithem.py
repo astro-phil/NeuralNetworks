@@ -78,6 +78,6 @@ if __name__ == '__main__':
         fittest = evolution.get_fittest_network()
         replaySpecies = evolution.get_target([fittest])
         with open("replay/species_{:03d}.mdl".format(evolution.evolution),'wb+') as handle:
-            pickle.dump(replayBoid,handle,protocol = pickle.HIGHEST_PROTOCOL)
+            pickle.dump(replaySpecies,handle,protocol = pickle.HIGHEST_PROTOCOL)
             handle.close()
         evolution.save_model('evolution')
